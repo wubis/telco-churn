@@ -1,6 +1,6 @@
 # Telco churn: Bayesian hierarchical logistic regression
 
-This project estimates associations between customer characteristics and churn in the public IBM Telco Customer Churn sample. It compares a Bayesian logistic model with contract-specific, partially pooled intercepts against ordinary logistic regression with contract fixed effects. The custom Metropolis--Hastings sampler was originally built for a Bayesian statistics course; the portfolio validation adds a held-out comparison and stronger chain diagnostics.
+This project estimates associations between customer characteristics and churn in the public IBM Telco Customer Churn sample. It compares a Bayesian logistic model with contract-specific, partially pooled intercepts against ordinary logistic regression with contract fixed effects. The Metropolis-Hastings sampler was custom built for understanding; the portfolio validation adds a held-out comparison and stronger chain diagnostics.
 
 ## Question and scope
 
