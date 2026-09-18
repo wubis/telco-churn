@@ -1,0 +1,3 @@
+model,accuracy_at_0.5,brier_score,log_loss
+Frequentist logistic with contract fixed effects,0.7996302616609784,0.13675211890203331,0.4199717823717932
+Bayesian hierarchical logistic,0.7996302616609784,0.13674671532094174,0.4199816566007284

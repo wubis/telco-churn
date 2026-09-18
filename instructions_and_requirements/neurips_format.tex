@@ -1,0 +1,297 @@
+\documentclass{article}
+
+\IfFileExists{neurips_2018.sty}{
+  \usepackage[final]{neurips_2018}
+}{
+  \usepackage[margin=1in]{geometry}
+  \usepackage{times}
+}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{microtype}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{placeins}
+\usepackage{caption}
+
+\title{Bayesian Hierarchical Logistic Regression for Telco Customer Churn}
+
+\author{%
+  Justin Y. Wang\\
+  Department of Applied Mathematics and Statistics\\
+  Johns Hopkins University\\
+  Baltimore, MD 21218\\
+  \texttt{jwang518@jhu.edu}
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Customer churn is a central retention problem in telecommunications because firms lose recurring revenue when subscribers cancel service. This project studies churn in the IBM Telco Customer Churn data set using a Bayesian hierarchical logistic regression model. The response is whether a customer churned, and predictors include tenure, monthly charges, demographic variables, internet service, payment method, and service-support features. The Bayesian model uses contract type as a grouping variable and estimates contract-specific intercepts with a hierarchical prior. Posterior inference was performed with a hand-written random-walk Metropolis--Hastings sampler using a non-centered parameterization. The model finds strong evidence that longer tenure, online security, tech support, and no internet service are associated with lower churn, while higher monthly charges, senior-citizen status, paperless billing, fiber optic service, and electronic check payment are associated with higher churn. Predictive performance is similar to a frequentist logistic regression baseline, with both models reaching about 0.800 in-sample accuracy and log loss near 0.420. The main advantage of the Bayesian model is therefore not raw prediction, but uncertainty-aware inference and partial pooling of baseline churn risk across contract types.
+\end{abstract}
+
+\section{Introduction}
+
+Customer churn occurs when a customer stops doing business with a company. In subscription businesses such as telecommunications, churn is especially important because acquiring new customers is often more expensive than retaining existing ones. The purpose of this project is to identify customer and contract characteristics associated with churn while using a Bayesian model that gives direct uncertainty quantification.
+
+The main research questions are:
+\begin{enumerate}
+  \item Which customer-level features are associated with higher or lower churn probability?
+  \item Does baseline churn risk vary meaningfully by contract type?
+  \item What does a Bayesian hierarchical model add beyond a standard frequentist logistic regression baseline?
+\end{enumerate}
+
+The final question is important for the narrative of the project. The Bayesian model is not presented as a black-box classifier designed to maximize prediction accuracy. Instead, it is an interpretable probabilistic model. Its value is that it estimates uncertainty in coefficients and group-level churn risk, incorporates regularization through priors, and partially pools contract-specific intercepts.
+
+\section{Related work}
+
+Customer churn prediction has a large applied literature in telecommunications. Keramati et al.\ study churn prediction using several methods including logistic regression, decision trees, neural networks, support vector machines, and other data-mining approaches, emphasizing that billing, account, and service features can be predictive of churn \cite{keramati2012}. Ahmad et al.\ similarly frame churn prediction as a revenue and retention problem for telecom firms and evaluate machine-learning methods for identifying likely churners \cite{ahmad2019}. Amin et al.\ compare logistic regression and LogitBoost for telecom churn prediction, showing that logistic models remain a common interpretable baseline in this setting \cite{amin2020}. More recent churn studies often emphasize feature engineering, transformation, and model comparison across algorithms such as random forests, gradient boosting, and neural networks \cite{jeb2022}.
+
+This project differs from much of the churn-prediction literature by focusing less on maximizing predictive accuracy and more on Bayesian inference. The model is motivated by multilevel regression and partial pooling as described by Gelman and Hill \cite{gelmanhill2007}. Contract type is treated as a grouping variable because it represents a natural segmentation of customer commitment: month-to-month, one-year, and two-year contracts. From a computational perspective, hierarchical models can mix poorly under centered parameterizations when group effects and population-level hyperparameters are strongly coupled. The non-centered parameterization used here follows standard advice for improving posterior geometry in hierarchical models \cite{betancourt2019}.
+
+\section{Data and exploratory analysis}
+
+The data set contains customer records for a fictional telecommunications company. The raw data have 7043 observations and 21 columns. The response variable is \texttt{Churn}, encoded as 1 for customers who churned and 0 otherwise. The only missingness issue used in this analysis is that \texttt{TotalCharges} contains 11 blank values. These rows were dropped, leaving 7032 observations. The overall churn rate after cleaning is 26.6\%.
+
+\texttt{customerID} was removed because it is only an identifier. \texttt{TotalCharges} was converted to numeric for exploratory analysis but omitted from the regression model because it is highly collinear with tenure and monthly charges. In the cleaned data, its correlation with tenure is 0.826 and its correlation with monthly charges is 0.651. Keeping all three variables would make coefficient interpretation less stable, so the model uses tenure and monthly charges as the main continuous billing-duration variables. Both continuous predictors were standardized before fitting the Bayesian model.
+
+\begin{table}[t]
+\centering
+\caption{Basic data summary after cleaning.}
+\begin{tabular}{lr}
+\toprule
+Quantity & Value \\
+\midrule
+Raw observations & 7043 \\
+Clean observations & 7032 \\
+Dropped blank \texttt{TotalCharges} rows & 11 \\
+Overall churn rate & 0.266 \\
+Mean tenure & 32.42 months \\
+Mean monthly charges & 64.80 \\
+Corr(\texttt{tenure}, \texttt{TotalCharges}) & 0.826 \\
+Corr(\texttt{MonthlyCharges}, \texttt{TotalCharges}) & 0.651 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Exploratory analysis suggests several strong churn patterns. Contract type is the most visible: month-to-month customers churn at much higher rates than customers with one-year or two-year contracts. Internet service is also informative, with fiber optic customers showing higher churn than DSL or no-internet customers. Payment method is especially striking: electronic check customers have a churn rate of 45.3\%, compared with 19.2\% for mailed check, 16.7\% for automatic bank transfer, and 15.3\% for automatic credit card payment. Customers with online security or tech support also show lower observed churn rates. Figure \ref{fig:eda} summarizes these exploratory patterns.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\linewidth]{figures/eda_churn_rates.pdf}
+\caption{Exploratory churn rates by contract type, internet service, payment method, and support/security features. These patterns motivate the model's contract-level hierarchy and customer-level predictors.}
+\label{fig:eda}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{Observed churn by payment method.}
+\begin{tabular}{lrr}
+\toprule
+Payment method & Churn rate & $n$ \\
+\midrule
+Electronic check & 0.453 & 2365 \\
+Mailed check & 0.192 & 1604 \\
+Bank transfer (automatic) & 0.167 & 1542 \\
+Credit card (automatic) & 0.153 & 1521 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The EDA motivates the model structure. Contract type is used as a hierarchical grouping variable because it changes baseline churn risk. The visible differences by payment method, internet service, support features, tenure, and monthly charges directly motivate including these variables as regression predictors. Thus the model is not chosen abstractly: it is designed to formalize the strongest descriptive patterns from Figure \ref{fig:eda} while adjusting for them jointly.
+
+\section{Model}
+
+Let $y_i$ be the churn indicator for customer $i$, and let $g[i]$ denote the contract group for that customer. The likelihood is
+\begin{align}
+y_i &\sim \text{Bernoulli}(p_i),\\
+\text{logit}(p_i) &= \alpha_{g[i]} + x_i^\top \beta,
+\end{align}
+where $x_i$ contains standardized tenure and monthly charges together with binary or one-hot encoded customer features. The contract groups are month-to-month, one-year, and two-year contracts.
+
+The centered hierarchical prior is
+\begin{align}
+\alpha_g &\sim \mathcal{N}(\mu_\alpha, \tau_\alpha^2),\\
+\beta_j &\sim \mathcal{N}(0,2.5^2),\\
+\mu_\alpha &\sim \mathcal{N}(0,5^2),\\
+\tau_\alpha &\sim \text{Half-Normal}(2.5).
+\end{align}
+These are weakly informative priors on the log-odds scale. The $\mathcal{N}(0,2.5^2)$ prior for fixed effects allows large but not implausibly extreme odds-ratio effects after standardizing the continuous predictors. The $\mathcal{N}(0,5^2)$ prior for $\mu_\alpha$ is broad for a logistic intercept, and the Half-Normal$(2.5)$ prior keeps the group-level standard deviation positive while mildly discouraging unrealistically large between-contract variation.
+For computation, I used the equivalent non-centered parameterization
+\begin{align}
+z_g &\sim \mathcal{N}(0,1),\\
+\alpha_g &= \mu_\alpha + \tau_\alpha z_g.
+\end{align}
+This parameterization leaves the statistical model unchanged but improves mixing for the group effects because the standardized $z_g$ variables are less tightly coupled to $\mu_\alpha$ and $\tau_\alpha$.
+
+\section{Computation}
+
+The posterior is not conjugate because of the logistic likelihood, so posterior inference was performed using a block random-walk Metropolis--Hastings sampler. The sampler updates four blocks: the fixed-effect vector $\beta$, the standardized group effects $z_\alpha$, the hyper-mean $\mu_\alpha$, and $\eta_\tau=\log(\tau_\alpha)$. Sampling on the log scale ensures that $\tau_\alpha$ remains positive; the log posterior includes the Jacobian term for this transformation.
+
+I ran four chains with 45,000 iterations each. The first 12,000 iterations were treated as warmup, and every third post-warmup draw was retained. During warmup only, proposal scales were adapted toward an acceptance rate near 0.30. Adaptation was stopped before posterior draws were collected.
+
+\begin{table}[t]
+\centering
+\caption{Final Metropolis--Hastings acceptance rates by chain.}
+\begin{tabular}{lrrrr}
+\toprule
+Chain & $\beta$ & $z_\alpha$ & $\mu_\alpha$ & $\tau_\alpha$ \\
+\midrule
+1 & 0.288 & 0.239 & 0.300 & 0.288 \\
+2 & 0.295 & 0.300 & 0.297 & 0.241 \\
+3 & 0.283 & 0.341 & 0.293 & 0.244 \\
+4 & 0.308 & 0.339 & 0.297 & 0.364 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Diagnostics included trace plots, autocorrelation plots, approximate effective sample sizes, and $\hat{R}$. Figure \ref{fig:acf} shows representative autocorrelation functions. The contract-level intercepts mixed much better under the non-centered parameterization: approximate ESS values were 482, 604, and 867 for month-to-month, one-year, and two-year intercepts, respectively, with $\hat{R}$ values near 1.001. The weakest diagnostic was for $\mu_\alpha$, with ESS about 63 and $\hat{R}=1.058$. This is not surprising because there are only three contract groups, so the population-level mean of the group intercept distribution is weakly identified. The slightly elevated $\hat{R}$ for $\mu_\alpha$ suggests slower mixing for this supporting hyperparameter, but it does not materially affect the conclusions about fixed effects or contract-specific intercepts.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.78\linewidth]{figures/mcmc_acf_diagnostics.png}
+\caption{Representative autocorrelation functions for selected fixed effects, contract intercepts, and the contract-level scale parameter. Autocorrelation remains visible for some hierarchical quantities, but the non-centered model gives acceptable mixing for the main scientific parameters.}
+\label{fig:acf}
+\end{figure}
+
+\section{Results}
+
+Table \ref{tab:posterior} summarizes the main posterior effects, and Figure \ref{fig:fixed} visualizes the corresponding posterior intervals. Because tenure and monthly charges were standardized, their odds ratios correspond to one-standard-deviation increases. Longer tenure is strongly associated with lower churn: the posterior median odds ratio is 0.458 and $\Pr(\beta_{\text{tenure}}<0)=1.000$. Higher monthly charges are associated with higher churn, with posterior median odds ratio 1.403 and $\Pr(\beta_{\text{MonthlyCharges}}>0)=0.999$.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.86\linewidth]{figures/posterior_fixed_effects.pdf}
+\caption{Posterior means and 95\% credible intervals for selected fixed effects. Intervals to the right of zero indicate higher churn odds, while intervals to the left indicate lower churn odds.}
+\label{fig:fixed}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{Selected Bayesian posterior summaries for fixed effects.}
+\label{tab:posterior}
+\begin{tabular}{lrrrr}
+\toprule
+Predictor & Mean & 95\% CrI & Direction prob. & Median OR \\
+\midrule
+Tenure & -0.781 & $[-0.885,-0.677]$ & $\Pr(<0)=1.000$ & 0.458 \\
+Monthly charges & 0.339 & $[0.126,0.536]$ & $\Pr(>0)=0.999$ & 1.403 \\
+Senior citizen & 0.254 & $[0.092,0.416]$ & $\Pr(>0)=0.999$ & 1.289 \\
+Dependents & -0.181 & $[-0.355,-0.007]$ & $\Pr(<0)=0.980$ & 0.835 \\
+Paperless billing & 0.371 & $[0.223,0.521]$ & $\Pr(>0)=1.000$ & 1.447 \\
+Online security & -0.455 & $[-0.624,-0.291]$ & $\Pr(<0)=1.000$ & 0.635 \\
+Tech support & -0.395 & $[-0.568,-0.222]$ & $\Pr(<0)=1.000$ & 0.674 \\
+Fiber optic internet & 0.499 & $[0.220,0.787]$ & $\Pr(>0)=1.000$ & 1.649 \\
+No internet service & -0.765 & $[-1.071,-0.462]$ & $\Pr(<0)=1.000$ & 0.465 \\
+Electronic check & 0.368 & $[0.186,0.551]$ & $\Pr(>0)=1.000$ & 1.445 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The contract intercepts also show a clear monotone pattern. Month-to-month customers have the highest baseline churn risk, followed by one-year and then two-year contracts. Figure \ref{fig:alpha} shows this separation graphically:
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.72\linewidth]{figures/posterior_contract_intercepts.pdf}
+\caption{Posterior intervals for contract-specific intercepts. More negative intercepts indicate lower baseline churn on the log-odds scale after accounting for customer-level predictors.}
+\label{fig:alpha}
+\end{figure}
+\begin{center}
+\captionof{table}{Posterior summaries for contract-specific intercepts.}
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+Contract group & Mean & SD & 95\% CrI & ESS \\
+\midrule
+Month-to-month & -1.294 & 0.135 & $[-1.561,-1.034]$ & 482 \\
+One year & -1.954 & 0.150 & $[-2.252,-1.665]$ & 604 \\
+Two year & -2.593 & 0.199 & $[-2.992,-2.213]$ & 867 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+These estimates are consistent with the EDA: short tenure, month-to-month contracts, fiber optic service, paperless billing, and electronic check payment all point toward higher churn risk. Online security and tech support are associated with lower churn, suggesting that customers with more protective or support-oriented services may be less likely to leave.
+
+\section{Comparison with frequentist logistic regression}
+
+To evaluate whether the Bayesian model improved prediction, I fit a frequentist logistic regression baseline with the same customer-level predictors and fixed effects for contract type. The comparison is intentionally direct. The frequentist model is a strong baseline, not a straw-man model.
+
+\begin{center}
+\captionof{table}{In-sample predictive comparison.}
+\centering
+\begin{tabular}{lrrr}
+\toprule
+Model & Accuracy & Brier score & Log loss \\
+\midrule
+Frequentist logistic with contract fixed effects & 0.7996 & 0.13675 & 0.41997 \\
+Bayesian hierarchical logistic & 0.7996 & 0.13675 & 0.41998 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The predictive metrics are essentially tied, as visualized in Figure \ref{fig:comparison}. The posterior predictive mean churn rate was 0.266, with a 95\% posterior interval of approximately $[0.257,0.275]$, which covers the observed churn rate of 0.266. Therefore, the Bayesian model's advantage should not be described as better classification accuracy. Its advantage is inferential. It provides posterior distributions for all quantities, posterior probabilities for directions of effects, odds-ratio credible intervals, regularization through priors, and a principled partially pooled representation of baseline contract-type heterogeneity.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.78\linewidth]{figures/model_comparison.pdf}
+\caption{In-sample predictive metrics for the frequentist logistic baseline and Bayesian hierarchical model. The two models are essentially tied predictively, so the Bayesian contribution is inferential rather than a raw accuracy gain.}
+\label{fig:comparison}
+\end{figure}
+
+\FloatBarrier
+
+\section{Discussion}
+
+The analysis supports the view that churn is driven by both customer-specific variables and contract-level baseline risk. The strongest protective factor is tenure: customers who have stayed longer are much less likely to churn. Support/security features such as online security and tech support are also associated with lower churn. In contrast, higher monthly charges, paperless billing, fiber optic service, electronic check payment, and senior-citizen status are associated with higher churn.
+
+The hierarchical structure is substantively useful because contract type is not merely another arbitrary categorical variable. It represents different levels of customer commitment. Month-to-month customers are easier to lose than one-year or two-year customers, and the model captures this through contract-specific baseline intercepts. The partial pooling prior is a Bayesian way to estimate these differences while recognizing that the three contract groups are related.
+
+There are several limitations. First, the data are observational, so the coefficients should not be interpreted causally. For example, fiber optic service may proxy for unobserved customer expectations, price sensitivity, or service quality issues. Second, the predictive comparison is in-sample; a full predictive study should use train/test splitting or cross-validation. Third, there are only three contract groups, so the hyperparameters $\mu_\alpha$ and $\tau_\alpha$ are weakly informed. Finally, the sampler is a hand-written Metropolis--Hastings algorithm for course scope. More advanced software could fit the same model more efficiently, but Hamiltonian Monte Carlo and NUTS were intentionally avoided to stay within the class-approved computational methods.
+
+\section{Conclusion}
+
+This project developed a Bayesian hierarchical logistic regression model for customer churn. The model gives a coherent answer to the main research question: churn is higher among month-to-month customers, customers with shorter tenure, customers with higher monthly charges, fiber optic customers, paperless-billing customers, and electronic-check customers; churn is lower among customers with online security, tech support, and no internet service. Compared with a frequentist logistic regression baseline, the Bayesian model does not materially improve in-sample predictive performance. Its value lies in posterior uncertainty quantification, regularization, and partial pooling of contract-specific baseline churn risk.
+
+\FloatBarrier
+
+\begin{thebibliography}{9}
+
+\bibitem[Ahmad et al.(2019)]{ahmad2019}
+Ahmad, A. K., Jafar, A., and Aljoumaa, K. (2019).
+\newblock Customer churn prediction in telecom using machine learning in big data platform.
+\newblock \emph{Journal of Big Data}, 6(28).
+
+\bibitem[Amin et al.(2020)]{amin2020}
+Amin, A., Anwar, S., Adnan, A., Nawaz, M., Howard, N., Qadir, J., Hawalah, A., and Hussain, A. (2020).
+\newblock Churn prediction in telecommunication using logistic regression and LogitBoost.
+\newblock \emph{Procedia Computer Science}, 167, 101--112.
+
+\bibitem[Betancourt(2019)]{betancourt2019}
+Betancourt, M. (2019).
+\newblock Hierarchical modeling.
+\newblock \url{https://betanalpha.github.io/assets/case_studies/hierarchical_modeling.html}.
+
+\bibitem[Gelman and Hill(2007)]{gelmanhill2007}
+Gelman, A. and Hill, J. (2007).
+\newblock \emph{Data Analysis Using Regression and Multilevel/Hierarchical Models}.
+\newblock Cambridge University Press.
+
+\bibitem[Jeb et al.(2022)]{jeb2022}
+Jeb, S. N., Lasheng, Y., Aluvalu, R., and Dasig, D. (2022).
+\newblock A novel customer churn prediction model for the telecommunication industry using data transformation methods and feature selection.
+\newblock \emph{PLOS ONE}, 17(12):e0278095.
+
+\bibitem[Keramati et al.(2012)]{keramati2012}
+Keramati, A., Jafari-Marandi, R., Aliannejadi, M., Ahmadian, I., Mozaffari, M., and Abbasi, U. (2012).
+\newblock Customer churn prediction in telecommunications.
+\newblock \emph{Expert Systems with Applications}, 39(1), 1414--1425.
+
+\end{thebibliography}
+
+\end{document}
