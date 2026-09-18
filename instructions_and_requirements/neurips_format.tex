@@ -10,6 +10,7 @@
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{hyperref}
+\hypersetup{hidelinks}
 \usepackage{url}
 \usepackage{booktabs}
 \usepackage{amsmath}
@@ -21,6 +22,7 @@
 \usepackage{caption}
 
 \title{Bayesian Hierarchical Logistic Regression for Telco Customer Churn}
+\date{September 2026 portfolio update}
 
 \author{%
   Justin Y. Wang\\
@@ -34,7 +36,7 @@
 \maketitle
 
 \begin{abstract}
-Customer churn is a central retention problem in telecommunications because firms lose recurring revenue when subscribers cancel service. This project studies churn in the IBM Telco Customer Churn data set using a Bayesian hierarchical logistic regression model. The response is whether a customer churned, and predictors include tenure, monthly charges, demographic variables, internet service, payment method, and service-support features. The Bayesian model uses contract type as a grouping variable and estimates contract-specific intercepts with a hierarchical prior. Posterior inference was performed with a hand-written random-walk Metropolis--Hastings sampler using a non-centered parameterization. The model finds strong evidence that longer tenure, online security, tech support, and no internet service are associated with lower churn, while higher monthly charges, senior-citizen status, paperless billing, fiber optic service, and electronic check payment are associated with higher churn. Predictive performance is similar to a frequentist logistic regression baseline, with both models reaching about 0.800 in-sample accuracy and log loss near 0.420. The main advantage of the Bayesian model is therefore not raw prediction, but uncertainty-aware inference and partial pooling of baseline churn risk across contract types.
+This project studies associations with churn in the IBM Telco Customer Churn sample using a Bayesian hierarchical logistic regression with contract-specific intercepts. A hand-written Metropolis--Hastings sampler was improved by interweaving centered and non-centered updates and using a training-data covariance proposal. Four-chain rank-normalized split diagnostics support the reported training posterior. On a stratified held-out set of 1,407 customers, the Bayesian model achieved ROC-AUC 0.839, Brier score 0.138, and log loss 0.424, essentially matching ordinary logistic regression with contract fixed effects. Contract-intercept estimates were also close across models; the practical gain from partial pooling is therefore limited in this sample. The Bayesian model provides a coherent posterior description of associations, while the predictive result remains limited to one random split of a static observational data set.
 \end{abstract}
 
 \section{Introduction}
@@ -129,134 +131,111 @@ For computation, I used the equivalent non-centered parameterization
 z_g &\sim \mathcal{N}(0,1),\\
 \alpha_g &= \mu_\alpha + \tau_\alpha z_g.
 \end{align}
-This parameterization leaves the statistical model unchanged but improves mixing for the group effects because the standardized $z_g$ variables are less tightly coupled to $\mu_\alpha$ and $\tau_\alpha$.
+This parameterization leaves the statistical model unchanged. In the validation fit, non-centered updates alone mixed slowly for the hyperparameters, so centered conditional updates were interwoven with them.
 
-\section{Computation}
+\section{Computation and validation design}
 
-The posterior is not conjugate because of the logistic likelihood, so posterior inference was performed using a block random-walk Metropolis--Hastings sampler. The sampler updates four blocks: the fixed-effect vector $\beta$, the standardized group effects $z_\alpha$, the hyper-mean $\mu_\alpha$, and $\eta_\tau=\log(\tau_\alpha)$. Sampling on the log scale ensures that $\tau_\alpha$ remains positive; the log posterior includes the Jacobian term for this transformation.
+After dropping 11 rows with blank \texttt{TotalCharges}, the 7,032 records were divided into a stratified training set ($n=5,625$) and a held-out test set ($n=1,407$; split seed 2026). Means and standard deviations for tenure and monthly charges were learned from the training set only. The test set was used only for final scoring and model checks. This retrospective split evaluates prediction for a current customer snapshot, not churn at a specified future horizon.
 
-I ran four chains with 45,000 iterations each. The first 12,000 iterations were treated as warmup, and every third post-warmup draw was retained. During warmup only, proposal scales were adapted toward an acceptance rate near 0.30. Adaptation was stopped before posterior draws were collected.
+The Bayesian model used four chains of 30,000 iterations, with 10,000 warmup iterations and every second later draw retained. During warmup only, random-walk proposal scales adapted toward 0.30 acceptance. The fixed-effect proposal used a covariance estimate from a frequentist logistic fit to the training data. To improve mixing for the contract hierarchy, each sweep combined non-centered Metropolis updates with a centered conditional draw for $\mu_\alpha$ and a centered Metropolis update for $\log\tau_\alpha$, holding the contract intercepts fixed. These updates target the same posterior. Final block acceptance rates ranged from 0.284 to 0.324.
 
-\begin{table}[t]
+Diagnostics were recalculated from separate chains with rank-normalized split $\hat R$ and approximate chain-aware bulk and tail effective sample sizes. Every parameter in the primary fit had $\hat R<1.009$; the smallest approximate bulk ESS was 366 for the month-to-month intercept. Figure \ref{fig:trace} shows two representative traces. This is a substantial improvement over the original course notebook, whose concatenated-chain ESS and unsplit $\hat R$ should not be used as convergence evidence.
+
+\begin{figure}[!htbp]
 \centering
-\caption{Final Metropolis--Hastings acceptance rates by chain.}
-\begin{tabular}{lrrrr}
+\includegraphics[width=0.75\linewidth]{figures/mcmc_trace_validation.png}
+\caption{Post-warmup traces from the four validation chains for a fixed effect and the contract hyper-mean. Complete diagnostics are saved in \texttt{results/mcmc\_diagnostics.csv}.}
+\label{fig:trace}
+\end{figure}
+
+\section{Posterior results}
+
+Table \ref{tab:posterior} summarizes training-set posteriors. Longer tenure, online security, tech support, and no internet service were associated with lower churn odds; higher monthly charges, paperless billing, fiber service, and electronic-check payment were associated with higher odds. The interval for dependents included zero in this training fit, so its direction is not established. These are adjusted associations, not effects of changing a customer's services.
+
+\begin{table}[!htbp]
+\centering
+\caption{Selected training-set Bayesian fixed effects. Continuous predictors are standardized.}
+\label{tab:posterior}
+\begin{tabular}{lrr}
 \toprule
-Chain & $\beta$ & $z_\alpha$ & $\mu_\alpha$ & $\tau_\alpha$ \\
+Predictor & Mean log odds & 95\% CrI \\
 \midrule
-1 & 0.288 & 0.239 & 0.300 & 0.288 \\
-2 & 0.295 & 0.300 & 0.297 & 0.241 \\
-3 & 0.283 & 0.341 & 0.293 & 0.244 \\
-4 & 0.308 & 0.339 & 0.297 & 0.364 \\
+Tenure & -0.798 & $[-0.925,-0.677]$ \\
+Monthly charges & 0.310 & $[0.096,0.529]$ \\
+Senior citizen & 0.277 & $[0.090,0.459]$ \\
+Dependents & -0.145 & $[-0.339,0.053]$ \\
+Paperless billing & 0.400 & $[0.234,0.571]$ \\
+Online security & -0.378 & $[-0.577,-0.187]$ \\
+Tech support & -0.436 & $[-0.623,-0.248]$ \\
+Fiber optic internet & 0.508 & $[0.206,0.805]$ \\
+No internet service & -0.763 & $[-1.102,-0.427]$ \\
+Electronic check & 0.386 & $[0.180,0.592]$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Diagnostics included trace plots, autocorrelation plots, approximate effective sample sizes, and $\hat{R}$. Figure \ref{fig:acf} shows representative autocorrelation functions. The contract-level intercepts mixed much better under the non-centered parameterization: approximate ESS values were 482, 604, and 867 for month-to-month, one-year, and two-year intercepts, respectively, with $\hat{R}$ values near 1.001. The weakest diagnostic was for $\mu_\alpha$, with ESS about 63 and $\hat{R}=1.058$. This is not surprising because there are only three contract groups, so the population-level mean of the group intercept distribution is weakly identified. The slightly elevated $\hat{R}$ for $\mu_\alpha$ suggests slower mixing for this supporting hyperparameter, but it does not materially affect the conclusions about fixed effects or contract-specific intercepts.
-
 \begin{figure}[!htbp]
 \centering
-\includegraphics[width=0.78\linewidth]{figures/mcmc_acf_diagnostics.png}
-\caption{Representative autocorrelation functions for selected fixed effects, contract intercepts, and the contract-level scale parameter. Autocorrelation remains visible for some hierarchical quantities, but the non-centered model gives acceptable mixing for the main scientific parameters.}
-\label{fig:acf}
-\end{figure}
-
-\section{Results}
-
-Table \ref{tab:posterior} summarizes the main posterior effects, and Figure \ref{fig:fixed} visualizes the corresponding posterior intervals. Because tenure and monthly charges were standardized, their odds ratios correspond to one-standard-deviation increases. Longer tenure is strongly associated with lower churn: the posterior median odds ratio is 0.458 and $\Pr(\beta_{\text{tenure}}<0)=1.000$. Higher monthly charges are associated with higher churn, with posterior median odds ratio 1.403 and $\Pr(\beta_{\text{MonthlyCharges}}>0)=0.999$.
-
-\begin{figure}[!htbp]
-\centering
-\includegraphics[width=0.86\linewidth]{figures/posterior_fixed_effects.pdf}
-\caption{Posterior means and 95\% credible intervals for selected fixed effects. Intervals to the right of zero indicate higher churn odds, while intervals to the left indicate lower churn odds.}
+\includegraphics[width=0.81\linewidth]{figures/posterior_fixed_effects_validation.png}
+\caption{Training posterior means and 95\% credible intervals for selected fixed effects.}
 \label{fig:fixed}
 \end{figure}
 
-\begin{table}[t]
+The contract intercepts retain the expected order, but these intercepts describe a particular reference profile, not each group's observed churn rate. The frequentist fixed-effect intercepts were within 0.02 log-odds units of the corresponding Bayesian means. With three well-populated groups, this analysis does not demonstrate a material estimation advantage from partial pooling.
+
+\begin{center}
+\captionof{table}{Training contract intercepts and frequentist comparison.}
 \centering
-\caption{Selected Bayesian posterior summaries for fixed effects.}
-\label{tab:posterior}
+\begin{tabular}{lrrr}
+\toprule
+Contract & Bayesian mean & 95\% CrI & Frequentist \\
+\midrule
+Month-to-month & -1.338 & $[-1.630,-1.048]$ & -1.323 \\
+One year & -1.952 & $[-2.276,-1.627]$ & -1.940 \\
+Two year & -2.649 & $[-3.089,-2.210]$ & -2.666 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A sensitivity run changed the Half-Normal prior scale on $\tau_\alpha$ from 2.5 to 1.0. The posterior mean of $\tau_\alpha$ changed from 1.262 to 0.871, while each contract-intercept mean moved by less than 0.01. Thus the group effects are stable under this check, but the population spread remains prior-sensitive with only three groups. The alternative run's largest rank-split $\hat R$ was 1.014, so the sensitivity estimates are approximate.
+
+\section{Held-out prediction and model checks}
+
+The frequentist baseline used the same customer predictors and contract fixed effects. Table \ref{tab:heldout} reports test-set results alongside a constant-probability baseline set to training prevalence. Both logistic models improved substantially over that baseline and were effectively tied with each other. A one-customer difference in accuracy at threshold 0.5 does not establish a meaningful winner.
+
+\begin{table}[!htbp]
+\centering
+\caption{Held-out prediction on 1,407 customers. AP is average precision.}
+\label{tab:heldout}
 \begin{tabular}{lrrrr}
 \toprule
-Predictor & Mean & 95\% CrI & Direction prob. & Median OR \\
+Model & Accuracy & ROC-AUC & AP & Brier / log loss \\
 \midrule
-Tenure & -0.781 & $[-0.885,-0.677]$ & $\Pr(<0)=1.000$ & 0.458 \\
-Monthly charges & 0.339 & $[0.126,0.536]$ & $\Pr(>0)=0.999$ & 1.403 \\
-Senior citizen & 0.254 & $[0.092,0.416]$ & $\Pr(>0)=0.999$ & 1.289 \\
-Dependents & -0.181 & $[-0.355,-0.007]$ & $\Pr(<0)=0.980$ & 0.835 \\
-Paperless billing & 0.371 & $[0.223,0.521]$ & $\Pr(>0)=1.000$ & 1.447 \\
-Online security & -0.455 & $[-0.624,-0.291]$ & $\Pr(<0)=1.000$ & 0.635 \\
-Tech support & -0.395 & $[-0.568,-0.222]$ & $\Pr(<0)=1.000$ & 0.674 \\
-Fiber optic internet & 0.499 & $[0.220,0.787]$ & $\Pr(>0)=1.000$ & 1.649 \\
-No internet service & -0.765 & $[-1.071,-0.462]$ & $\Pr(<0)=1.000$ & 0.465 \\
-Electronic check & 0.368 & $[0.186,0.551]$ & $\Pr(>0)=1.000$ & 1.445 \\
+Prevalence baseline & 0.7342 & 0.5000 & 0.2658 & 0.1952 / 0.5791 \\
+Frequentist logistic & 0.8038 & 0.8391 & 0.6537 & 0.1380 / 0.4236 \\
+Bayesian hierarchical & 0.8045 & 0.8390 & 0.6537 & 0.1380 / 0.4235 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The contract intercepts also show a clear monotone pattern. Month-to-month customers have the highest baseline churn risk, followed by one-year and then two-year contracts. Figure \ref{fig:alpha} shows this separation graphically:
+Figure \ref{fig:calibration} displays held-out calibration by prediction decile. To check the probability model more directly, binary churn outcomes were simulated from 1,200 posterior draws at the test-set covariates. Observed churn rates for the full test set and each contract group fell within the corresponding 95\% replicated-outcome intervals. This is a limited check: some individual calibration deciles differ visibly from the diagonal.
 
 \begin{figure}[!htbp]
 \centering
-\includegraphics[width=0.72\linewidth]{figures/posterior_contract_intercepts.pdf}
-\caption{Posterior intervals for contract-specific intercepts. More negative intercepts indicate lower baseline churn on the log-odds scale after accounting for customer-level predictors.}
-\label{fig:alpha}
+\includegraphics[width=0.57\linewidth]{figures/heldout_calibration.pdf}
+\caption{Held-out calibration by prediction decile for the Bayesian model.}
+\label{fig:calibration}
 \end{figure}
-\begin{center}
-\captionof{table}{Posterior summaries for contract-specific intercepts.}
-\centering
-\begin{tabular}{lrrrr}
-\toprule
-Contract group & Mean & SD & 95\% CrI & ESS \\
-\midrule
-Month-to-month & -1.294 & 0.135 & $[-1.561,-1.034]$ & 482 \\
-One year & -1.954 & 0.150 & $[-2.252,-1.665]$ & 604 \\
-Two year & -2.593 & 0.199 & $[-2.992,-2.213]$ & 867 \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-These estimates are consistent with the EDA: short tenure, month-to-month contracts, fiber optic service, paperless billing, and electronic check payment all point toward higher churn risk. Online security and tech support are associated with lower churn, suggesting that customers with more protective or support-oriented services may be less likely to leave.
-
-\section{Comparison with frequentist logistic regression}
-
-To evaluate whether the Bayesian model improved prediction, I fit a frequentist logistic regression baseline with the same customer-level predictors and fixed effects for contract type. The comparison is intentionally direct. The frequentist model is a strong baseline, not a straw-man model.
-
-\begin{center}
-\captionof{table}{In-sample predictive comparison.}
-\centering
-\begin{tabular}{lrrr}
-\toprule
-Model & Accuracy & Brier score & Log loss \\
-\midrule
-Frequentist logistic with contract fixed effects & 0.7996 & 0.13675 & 0.41997 \\
-Bayesian hierarchical logistic & 0.7996 & 0.13675 & 0.41998 \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-The predictive metrics are essentially tied, as visualized in Figure \ref{fig:comparison}. The posterior predictive mean churn rate was 0.266, with a 95\% posterior interval of approximately $[0.257,0.275]$, which covers the observed churn rate of 0.266. Therefore, the Bayesian model's advantage should not be described as better classification accuracy. Its advantage is inferential. It provides posterior distributions for all quantities, posterior probabilities for directions of effects, odds-ratio credible intervals, regularization through priors, and a principled partially pooled representation of baseline contract-type heterogeneity.
-
-\begin{figure}[!htbp]
-\centering
-\includegraphics[width=0.78\linewidth]{figures/model_comparison.pdf}
-\caption{In-sample predictive metrics for the frequentist logistic baseline and Bayesian hierarchical model. The two models are essentially tied predictively, so the Bayesian contribution is inferential rather than a raw accuracy gain.}
-\label{fig:comparison}
-\end{figure}
-
-\FloatBarrier
 
 \section{Discussion}
 
-The analysis supports the view that churn is driven by both customer-specific variables and contract-level baseline risk. The strongest protective factor is tenure: customers who have stayed longer are much less likely to churn. Support/security features such as online security and tech support are also associated with lower churn. In contrast, higher monthly charges, paperless billing, fiber optic service, electronic check payment, and senior-citizen status are associated with higher churn.
+The updated analysis supports several associations with churn and shows that both logistic models discriminate similarly on the held-out customers. The hierarchical prior offers a principled posterior for contract intercepts, but its practical shrinkage is small here. Logistic regression is an appropriately strong baseline, and frequentist confidence intervals also quantify uncertainty; the Bayesian contribution is the joint posterior and directly stated posterior probabilities under explicit priors.
 
-The hierarchical structure is substantively useful because contract type is not merely another arbitrary categorical variable. It represents different levels of customer commitment. Month-to-month customers are easier to lose than one-year or two-year customers, and the model captures this through contract-specific baseline intercepts. The partial pooling prior is a Bayesian way to estimate these differences while recognizing that the three contract groups are related.
-
-There are several limitations. First, the data are observational, so the coefficients should not be interpreted causally. For example, fiber optic service may proxy for unobserved customer expectations, price sensitivity, or service quality issues. Second, the predictive comparison is in-sample; a full predictive study should use train/test splitting or cross-validation. Third, there are only three contract groups, so the hyperparameters $\mu_\alpha$ and $\tau_\alpha$ are weakly informed. Finally, the sampler is a hand-written Metropolis--Hastings algorithm for course scope. More advanced software could fit the same model more efficiently, but Hamiltonian Monte Carlo and NUTS were intentionally avoided to stay within the class-approved computational methods.
+The data are observational, so these coefficients do not estimate the effect of an intervention. Tenure and service fields also require a current-customer prediction point; a signup model would need different features and a future churn horizon. This is a retrospective split after the original full-sample course analysis informed the model specification, so it is less independent than a test set reserved before EDA. It does not test future-period drift or transport to another company. The 0.5 threshold is illustrative, not an optimized retention policy. Finally, uncertainty in the hyperparameter $\tau_\alpha$ depends on its prior because there are only three contract groups.
 
 \section{Conclusion}
 
-This project developed a Bayesian hierarchical logistic regression model for customer churn. The model gives a coherent answer to the main research question: churn is higher among month-to-month customers, customers with shorter tenure, customers with higher monthly charges, fiber optic customers, paperless-billing customers, and electronic-check customers; churn is lower among customers with online security, tech support, and no internet service. Compared with a frequentist logistic regression baseline, the Bayesian model does not materially improve in-sample predictive performance. Its value lies in posterior uncertainty quantification, regularization, and partial pooling of contract-specific baseline churn risk.
+A custom Bayesian hierarchical logistic model can be fit with credible chain diagnostics and evaluated honestly against a matched logistic baseline. The held-out results are effectively tied: both achieve ROC-AUC about 0.839 and log loss about 0.424. The model's value is an interpretable posterior analysis of associations, while predictive superiority and a practical benefit from partial pooling are not established by this data set.
 
 \FloatBarrier
 

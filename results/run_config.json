@@ -1,0 +1,43 @@
+{
+  "split_seed": 2026,
+  "test_fraction": 0.2,
+  "train_n": 5625,
+  "test_n": 1407,
+  "sampler": {
+    "n_iter": 30000,
+    "burn": 10000,
+    "thin": 2,
+    "tau_scale": 2.5
+  },
+  "sensitivity_tau_scale": 1.0,
+  "chain_seeds": [
+    11,
+    22,
+    33,
+    44
+  ],
+  "continuous_means": {
+    "tenure": 32.385955555555554,
+    "MonthlyCharges": 64.48073777777778
+  },
+  "continuous_sds": {
+    "tenure": 24.516030587695596,
+    "MonthlyCharges": 30.053302399934932
+  },
+  "feature_names": [
+    "tenure",
+    "MonthlyCharges",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "PaperlessBilling",
+    "OnlineSecurity",
+    "TechSupport",
+    "InternetService_Fiber optic",
+    "InternetService_No",
+    "PaymentMethod_Credit card (automatic)",
+    "PaymentMethod_Electronic check",
+    "PaymentMethod_Mailed check"
+  ],
+  "interpretation": "Current customer snapshot only; observational associations are not causal."
+}
